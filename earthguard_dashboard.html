@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EarthGuard — Live Landslide Monitor</title>
+<!-- Supabase JS SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- Google Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  /* ── CONFIG: Paste your Supabase keys below ──────────────────────────────
+     Replace these two lines with your actual values.
+     The anon key is safe to expose publicly (read-only).
+  ──────────────────────────────────────────────────────────────────────── */
+
+  :root {
+    --supabase-url: "https://your-project.supabase.co";
+    --supabase-anon: "your-anon-key-here";
+  }
+
+  /* ── DESIGN SYSTEM ───────────────────────────────────────────────────── */
+  :root {
+    --bg:        #F8FAFC;
+    --panel:     #FFFFFF;
+    --border:    #E2E8F0;
+    --text:      #0F172A;
+    --muted:     #64748B;
+    --accent:    #1D4ED8;
+    --accent-lt: #EFF6FF;
+
+    --normal:    #059669;  --normal-bg:  #ECFDF5;
+    --watch:     #D97706;  --watch-bg:   #FFFBEB;
+    --warning:   #EA580C;  --warning-bg: #FFF7ED;
+    --critical:  #DC2626;  --critical-bg:#FEF2F2;
+
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 15px;
+  }
+
+  /* ── NAV ── */
+  .nav {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 60px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow);
+  }
+  .nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--text);
+  }
+  .nav-brand .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--normal);
+    animation: blink 2s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .nav-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .nav-right .last-update { font-family: 'DM Mono', monospace; }
+
+  /* ── MAIN ── */
+  .main { max-width: 1180px; margin: 0 auto; padding: 32px 20px; }
+
+  /* ── RISK BANNER ── */
+  .risk-banner {
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    transition: background .4s, border-color .4s;
+    border: 1px solid transparent;
+    flex-wrap: wrap;
+  }
+  .risk-banner.NORMAL   { background: var(--normal-bg);  border-color: #A7F3D0; }
+  .risk-banner.WATCH    { background: var(--watch-bg);   border-color: #FDE68A; }
+  .risk-banner.WARNING  { background: var(--warning-bg); border-color: #FDBA74; }
+  .risk-banner.CRITICAL { background: var(--critical-bg);border-color: #FCA5A5; }
+
+  .risk-left { display: flex; align-items: center; gap: 20px; }
+  .risk-icon { font-size: 48px; line-height: 1; }
+  .risk-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; opacity: .7; }
+  .risk-value { font-size: 36px; font-weight: 700; line-height: 1; }
+  .risk-value.NORMAL   { color: var(--normal); }
+  .risk-value.WATCH    { color: var(--watch); }
+  .risk-value.WARNING  { color: var(--warning); }
+  .risk-value.CRITICAL { color: var(--critical); }
+
+  .risk-right { text-align: right; }
+  .risk-score-label { font-size: 13px; opacity: .6; margin-bottom: 4px; }
+  .risk-score-bar-wrap { width: 200px; height: 10px; background: rgba(0,0,0,0.08); border-radius: 99px; overflow: hidden; }
+  .risk-score-bar { height: 100%; border-radius: 99px; transition: width .8s ease; }
+  .NORMAL .risk-score-bar   { background: var(--normal); }
+  .WATCH .risk-score-bar    { background: var(--watch); }
+  .WARNING .risk-score-bar  { background: var(--warning); }
+  .CRITICAL .risk-score-bar { background: var(--critical); }
+  .risk-score-num { font-size: 22px; font-weight: 700; margin-top: 6px; font-family: 'DM Mono', monospace; }
+
+  /* ── SENSOR CARDS ── */
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .sensor-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+    box-shadow: var(--shadow);
+    transition: box-shadow .2s;
+  }
+  .sensor-card:hover { box-shadow: var(--shadow-md); }
+  .card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .card-icon { font-size: 22px; }
+  .card-badge {
+    font-size: 11px;
+    font-family: 'DM Mono', monospace;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--accent-lt);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .card-label { font-size: 12px; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+  .card-value { font-size: 38px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .card-unit { font-size: 16px; font-weight: 400; color: var(--muted); }
+  .card-sub { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+  /* trend arrows */
+  .trend-up   { color: #DC2626; }
+  .trend-down { color: #059669; }
+  .trend-flat { color: var(--muted); }
+
+  /* ── CHARTS ROW ── */
+  .charts-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
+
+  .chart-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+    box-shadow: var(--shadow);
+  }
+  .panel-title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .panel-title span { color: var(--muted); font-weight: 400; font-size: 12px; }
+  canvas { max-height: 220px; }
+
+  /* ── READINGS TABLE ── */
+  .table-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    margin-bottom: 28px;
+  }
+  .table-header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .readings-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .readings-table th { text-align: left; padding: 10px 16px; background: var(--bg); color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; font-weight: 600; border-bottom: 1px solid var(--border); }
+  .readings-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--text); }
+  .readings-table tr:last-child td { border-bottom: none; }
+  .readings-table tr:hover td { background: var(--bg); }
+  .level-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .level-NORMAL   { background: var(--normal-bg); color: var(--normal); }
+  .level-WATCH    { background: var(--watch-bg); color: var(--watch); }
+  .level-WARNING  { background: var(--warning-bg); color: var(--warning); }
+  .level-CRITICAL { background: var(--critical-bg); color: var(--critical); }
+
+  /* ── STATUS BAR ── */
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .status-dot.ok { background: var(--normal); }
+  .status-dot.err { background: var(--critical); }
+
+  /* ── LOADING SKELETON ── */
+  .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 6px; height: 40px; }
+  @keyframes shimmer { 0%{background-position:200%} 100%{background-position:-200%} }
+
+  /* ── FOOTER ── */
+  footer { text-align: center; padding: 32px 0 16px; color: var(--muted); font-size: 12px; }
+
+  @media (max-width: 600px) {
+    .nav { padding: 0 16px; }
+    .main { padding: 20px 12px; }
+    .risk-banner { padding: 20px; }
+    .risk-value { font-size: 26px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── CONFIGURATION ─────────────────────────────────────────────────────── -->
+<script>
+  // ✏️ REPLACE THESE WITH YOUR ACTUAL SUPABASE VALUES
+  const SUPABASE_URL  = "https://your-project-id.supabase.co";
+  const SUPABASE_ANON = "your-anon-key-here";
+  // ──────────────────────────────────────────────────────────────────────────
+</script>
+
+<!-- ── NAV ──────────────────────────────────────────────────────────────── -->
+<nav class="nav">
+  <div class="nav-brand">
+    <div class="dot" id="liveDot"></div>
+    EarthGuard
+  </div>
+  <div class="nav-right">
+    <span>🏔 Landslide Monitoring</span>
+    <span class="last-update" id="lastUpdate">Loading...</span>
+  </div>
+</nav>
+
+<!-- ── MAIN ──────────────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- RISK BANNER -->
+  <div class="risk-banner NORMAL" id="riskBanner">
+    <div class="risk-left">
+      <div class="risk-icon" id="riskIcon">🟢</div>
+      <div>
+        <div class="risk-label">Current Risk Level</div>
+        <div class="risk-value NORMAL" id="riskValue">Loading...</div>
+      </div>
+    </div>
+    <div class="risk-right">
+      <div class="risk-score-label">Risk Score</div>
+      <div class="risk-score-bar-wrap">
+        <div class="risk-score-bar" id="riskBar" style="width:0%"></div>
+      </div>
+      <div class="risk-score-num" id="riskNum">—</div>
+    </div>
+  </div>
+
+  <!-- SENSOR CARDS -->
+  <div class="cards-grid">
+    <div class="sensor-card">
+      <div class="card-top">
+        <span class="card-icon">📐</span>
+        <span class="card-badge">MPU6050</span>
+      </div>
+      <div class="card-label">Tilt Angle</div>
+      <div class="card-value" id="tiltVal">—<span class="card-unit">°</span></div>
+      <div class="card-sub" id="tiltSub">X / Y components</div>
+    </div>
+    <div class="sensor-card">
+      <div class="card-top">
+        <span class="card-icon">💧</span>
+        <span class="card-badge">ADS1115</span>
+      </div>
+      <div class="card-label">Soil Moisture</div>
+      <div class="card-value" id="moistureVal">—<span class="card-unit">%</span></div>
+      <div class="card-sub" id="moistureSub">Volumetric water content</div>
+    </div>
+    <div class="sensor-card">
+      <div class="card-top">
+        <span class="card-icon">🌧️</span>
+        <span class="card-badge">Forecast</span>
+      </div>
+      <div class="card-label">Rainfall (next 6h)</div>
+      <div class="card-value" id="rainfallVal">—<span class="card-unit">mm</span></div>
+      <div class="card-sub" id="rainfallSub">OpenWeatherMap forecast</div>
+    </div>
+    <div class="sensor-card">
+      <div class="card-top">
+        <span class="card-icon">📷</span>
+        <span class="card-badge">Camera AI</span>
+      </div>
+      <div class="card-label">Image Risk Score</div>
+      <div class="card-value" id="imageVal">—<span class="card-unit">/100</span></div>
+      <div class="card-sub" id="imageSub">Visual slope analysis</div>
+    </div>
+  </div>
+
+  <!-- CHARTS -->
+  <div class="charts-row">
+    <div class="chart-panel">
+      <div class="panel-title">Sensor History <span>Last 24 readings</span></div>
+      <canvas id="historyChart"></canvas>
+    </div>
+    <div class="chart-panel">
+      <div class="panel-title">Risk Distribution <span>Today</span></div>
+      <canvas id="riskPieChart"></canvas>
+    </div>
+  </div>
+
+  <!-- READINGS TABLE -->
+  <div class="table-panel">
+    <div class="table-header">
+      <div class="panel-title" style="margin:0">Recent Readings</div>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="readings-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Risk Level</th>
+            <th>Score</th>
+            <th>Tilt X</th>
+            <th>Tilt Y</th>
+            <th>Moisture</th>
+            <th>Rainfall</th>
+            <th>Img Score</th>
+          </tr>
+        </thead>
+        <tbody id="readingsBody">
+          <tr><td colspan="8" style="text-align:center;padding:30px;color:#94A3B8">Loading data...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- STATUS -->
+  <div class="status-bar">
+    <span><span class="status-dot ok" id="dbDot"></span> Database connected</span>
+    <span><span class="status-dot ok" id="rtDot"></span> Real-time active</span>
+    <span id="readingCount">0 readings today</span>
+    <span>Powered by Supabase + Vercel</span>
+  </div>
+
+</div>
+
+<footer>EarthGuard Landslide Monitoring System &mdash; Public View &mdash; Data updates every reading cycle</footer>
+
+<!-- ── JAVASCRIPT ─────────────────────────────────────────────────────────── -->
+<script>
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// Risk level config
+const RISK_CONFIG = {
+  NORMAL:   { icon: "🟢", color: "#059669" },
+  WATCH:    { icon: "🟡", color: "#D97706" },
+  WARNING:  { icon: "🟠", color: "#EA580C" },
+  CRITICAL: { icon: "🔴", color: "#DC2626" },
+};
+
+let historyChart = null;
+let pieChart = null;
+
+// ── Format timestamp ──────────────────────────────────────────────────────
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString('en-MY', { month:'short', day:'numeric',
+    hour:'2-digit', minute:'2-digit' });
+}
+function fmtTimeShort(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-MY', { hour:'2-digit', minute:'2-digit' });
+}
+
+// ── Update risk banner ────────────────────────────────────────────────────
+function updateBanner(row) {
+  const level = row.risk_level || 'NORMAL';
+  const score = row.risk_score || 0;
+  const cfg   = RISK_CONFIG[level] || RISK_CONFIG.NORMAL;
+
+  const banner = document.getElementById('riskBanner');
+  banner.className = `risk-banner ${level}`;
+
+  document.getElementById('riskIcon').textContent  = cfg.icon;
+  const rv = document.getElementById('riskValue');
+  rv.textContent  = level;
+  rv.className    = `risk-value ${level}`;
+
+  document.getElementById('riskBar').style.width = score + '%';
+  document.getElementById('riskNum').textContent  = score + ' / 100';
+
+  // Nav dot color
+  document.getElementById('liveDot').style.background = cfg.color;
+}
+
+// ── Update sensor cards ───────────────────────────────────────────────────
+function updateCards(row) {
+  const maxTilt = Math.max(Math.abs(row.tilt_x||0), Math.abs(row.tilt_y||0)).toFixed(1);
+  document.getElementById('tiltVal').innerHTML  = `${maxTilt}<span class="card-unit">°</span>`;
+  document.getElementById('tiltSub').textContent = `X: ${(row.tilt_x||0).toFixed(1)}°  Y: ${(row.tilt_y||0).toFixed(1)}°`;
+
+  document.getElementById('moistureVal').innerHTML = `${Math.round(row.moisture_pct||0)}<span class="card-unit">%</span>`;
+  const moist = row.moisture_pct || 0;
+  document.getElementById('moistureSub').textContent = moist > 80 ? '⚠️ Near saturation' : moist > 60 ? '📈 Elevated' : 'Normal range';
+
+  document.getElementById('rainfallVal').innerHTML = `${(row.rainfall_mm||0).toFixed(1)}<span class="card-unit">mm</span>`;
+  document.getElementById('imageVal').innerHTML    = `${row.image_score||0}<span class="card-unit">/100</span>`;
+
+  document.getElementById('lastUpdate').textContent = `Updated ${fmtTime(row.created_at)}`;
+}
+
+// ── Render table rows ─────────────────────────────────────────────────────
+function renderTable(rows) {
+  const tbody = document.getElementById('readingsBody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#94A3B8">No data yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td style="font-family:'DM Mono',monospace;font-size:12px">${fmtTime(r.created_at)}</td>
+      <td><span class="level-pill level-${r.risk_level}">${r.risk_level}</span></td>
+      <td style="font-family:'DM Mono',monospace">${r.risk_score}</td>
+      <td>${(r.tilt_x||0).toFixed(1)}°</td>
+      <td>${(r.tilt_y||0).toFixed(1)}°</td>
+      <td>${Math.round(r.moisture_pct||0)}%</td>
+      <td>${(r.rainfall_mm||0).toFixed(1)} mm</td>
+      <td>${r.image_score||0}</td>
+    </tr>
+  `).join('');
+}
+
+// ── Build history chart ───────────────────────────────────────────────────
+function buildHistoryChart(rows) {
+  const ctx = document.getElementById('historyChart').getContext('2d');
+  const labels   = rows.map(r => fmtTimeShort(r.created_at)).reverse();
+  const moisture = rows.map(r => r.moisture_pct||0).reverse();
+  const tilt     = rows.map(r => Math.max(Math.abs(r.tilt_x||0), Math.abs(r.tilt_y||0))).reverse();
+  const score    = rows.map(r => r.risk_score||0).reverse();
+
+  if (historyChart) historyChart.destroy();
+
+  historyChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Moisture %', data: moisture, borderColor: '#3B82F6', backgroundColor: 'rgba(59,130,246,0.07)', tension: 0.4, fill: true, pointRadius: 3 },
+        { label: 'Max Tilt °', data: tilt,     borderColor: '#F59E0B', backgroundColor: 'rgba(245,158,11,0.07)',  tension: 0.4, fill: false, pointRadius: 3 },
+        { label: 'Risk Score', data: score,    borderColor: '#EF4444', backgroundColor: 'rgba(239,68,68,0.07)',   tension: 0.4, fill: false, pointRadius: 3, borderDash: [4,3] },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: { legend: { labels: { font: { family: 'DM Sans', size: 12 }, boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { font: { family: 'DM Mono', size: 10 }, maxRotation: 45 }, grid: { color: '#F1F5F9' } },
+        y: { ticks: { font: { family: 'DM Mono', size: 11 } }, grid: { color: '#F1F5F9' } }
+      }
+    }
+  });
+}
+
+// ── Build pie chart ───────────────────────────────────────────────────────
+function buildPieChart(rows) {
+  const ctx = document.getElementById('riskPieChart').getContext('2d');
+  const counts = { NORMAL: 0, WATCH: 0, WARNING: 0, CRITICAL: 0 };
+  rows.forEach(r => { if (counts[r.risk_level] !== undefined) counts[r.risk_level]++; });
+
+  if (pieChart) pieChart.destroy();
+
+  pieChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(counts),
+      datasets: [{ data: Object.values(counts),
+        backgroundColor: ['#059669','#D97706','#EA580C','#DC2626'],
+        borderWidth: 0, hoverOffset: 6 }]
+    },
+    options: {
+      responsive: true,
+      cutout: '62%',
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 }, padding: 12, boxWidth: 12 } }
+      }
+    }
+  });
+}
+
+// ── Load initial data ─────────────────────────────────────────────────────
+async function loadData() {
+  try {
+    const { data, error } = await db
+      .from('sensor_readings')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(24);
+
+    if (error) throw error;
+    if (!data || !data.length) return;
+
+    updateBanner(data[0]);
+    updateCards(data[0]);
+    renderTable(data.slice(0, 10));
+    buildHistoryChart(data);
+    buildPieChart(data);
+
+    document.getElementById('readingCount').textContent = `${data.length} recent readings`;
+    document.getElementById('dbDot').className = 'status-dot ok';
+
+  } catch (err) {
+    console.error('Load error:', err);
+    document.getElementById('dbDot').className = 'status-dot err';
+    document.getElementById('lastUpdate').textContent = 'Connection error';
+  }
+}
+
+// ── Real-time subscription ────────────────────────────────────────────────
+function subscribeRealtime() {
+  db.channel('sensor_readings')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sensor_readings' },
+      payload => {
+        console.log('New reading:', payload.new);
+        // Reload all data to refresh charts + table
+        loadData();
+      }
+    )
+    .subscribe(status => {
+      document.getElementById('rtDot').className =
+        status === 'SUBSCRIBED' ? 'status-dot ok' : 'status-dot err';
+    });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+loadData();
+subscribeRealtime();
+// Fallback poll every 60s
+setInterval(loadData, 60000);
+</script>
+
+</body>
+</html>
